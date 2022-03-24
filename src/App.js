@@ -1,31 +1,17 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 
-function useGyro() {
-  const [angularVelocity, setAngularVelocity] = useState({
-    x: null,
-    y: null,
-    z: null,
-  });
-
-  // TODO: this eventlistener shouldnt need useEffect hook
-  useEffect(() => {
-    window.addEventListener("deviceorientation", (event) => {
-      const readings = {
-        x: event.alpha,
-        y: event.beta,
-        z: event.gamma,
-      };
-
-      setAngularVelocity({ ...readings });
-    });
-  }, []);
-
-  return angularVelocity;
-}
+import useSocket from "./hooks/useSocket";
+import useSensors from "./hooks/useSensors";
+const ENDPOINT = "wss://pingpong.tomasmaillo.com:8080";
 
 function App() {
-  const gyro = useGyro();
+  const [orientation, acceleration] = useSensors();
+  const [socketState, newOrientation, newAcceleration, ping] = useSocket(
+    ENDPOINT,
+    [orientation, acceleration]
+  );
 
   const getPerms = () => {
     DeviceMotionEvent.requestPermission().then((response) => {
@@ -40,46 +26,61 @@ function App() {
   return (
     <>
       <button onClick={getPerms}>getPerms</button>
-      <p>{gyro["x"]}</p>
-      <p>{gyro["y"]}</p>
-      <p>{gyro["z"]}</p>
+      <p>
+        Socket: {socketState} {ping}ms
+      </p>
+      <p>
+        {newOrientation["x"]} {newOrientation["y"]} {newOrientation["z"]}
+      </p>
+      <p>
+        {newAcceleration["x"]} {newAcceleration["y"]} {newAcceleration["z"]}
+      </p>
       <Canvas dpr={[1, 2]}>
         <ambientLight intensity={0.1} />
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} />
         <pointLight position={[-10, -10, -10]} />
         <Box
+          acceleration={newAcceleration}
           position={[0, 1.5, 0]}
-          rotation={[
-            (gyro["z"] * Math.PI) / 180,
-            (gyro["y"] * Math.PI) / 180,
-            (gyro["x"] * Math.PI) / 180,
-          ]}
+          newRot={
+            new THREE.Vector3(
+              (newOrientation["y"] * Math.PI) / 180,
+              (newOrientation["z"] * Math.PI) / 180,
+              (newOrientation["x"] * Math.PI) / 180
+            )
+          }
         />
       </Canvas>
     </>
   );
 }
 
-function Box(props) {
-  // This reference gives us direct access to the THREE.Mesh object
+function lerp(start, end, t) {
+  const endVariants = [end - Math.PI, end, end + Math.PI];
+
+  const closestEnd = endVariants.reduce((a, b) => {
+    return Math.abs(b - start) < Math.abs(a - start) ? b : a;
+  });
+
+  let lerpVal = (1 - t) * start + t * closestEnd;
+
+  return lerpVal;
+}
+
+function Box({ acceleration, newRot }) {
   const ref = useRef();
-  // Hold state for hovered and clicked events
-  const [hovered, hover] = useState(false);
-  const [clicked, click] = useState(false);
-  // Subscribe this component to the render-loop, rotate the mesh every frame
-  useFrame((state, delta) => (ref.current.rotation.x += 0.01));
-  // Return the view, these are regular Threejs elements expressed in JSX
+  useFrame(() => {
+    ref.current.rotation.x = lerp(ref.current.rotation.x, newRot["x"], 0.1);
+    ref.current.rotation.y = lerp(ref.current.rotation.y, newRot["y"], 0.1);
+    ref.current.rotation.z = lerp(ref.current.rotation.z, newRot["z"], 0.1);
+
+    ref.current.position.lerp(acceleration, 0.1);
+  });
+
   return (
-    <mesh
-      {...props}
-      ref={ref}
-      scale={clicked ? 1.5 : 1}
-      onClick={(event) => click(!clicked)}
-      onPointerOver={(event) => hover(true)}
-      onPointerOut={(event) => hover(false)}
-    >
-      <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={hovered ? "hotpink" : "orange"} />
+    <mesh ref={ref}>
+      <boxGeometry args={[2, 3, 0.1]} />
+      <meshStandardMaterial color={"orange"} />
     </mesh>
   );
 }
